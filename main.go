@@ -98,7 +98,7 @@ func main() {
 		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	
+
 	logger.Info(
 		"server running",
 		slog.String("port", srv.Addr),
