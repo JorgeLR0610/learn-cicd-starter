@@ -4,9 +4,10 @@ import (
 	"database/sql"
 	"embed"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi"
 	"github.com/go-chi/cors"
@@ -25,14 +26,17 @@ type apiConfig struct {
 var staticFiles embed.FS
 
 func main() {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
 	err := godotenv.Load(".env")
 	if err != nil {
-		log.Printf("warning: assuming default configuration. .env unreadable: %v", err)
+		logger.Warn("assuming default configuration", slog.Any("error", err), slog.String("reason", ".env unreadable"))
 	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		log.Fatal("PORT environment variable is not set")
+		logger.Error("PORT environment variable is not set")
+		os.Exit(1)
 	}
 
 	apiCfg := apiConfig{}
@@ -41,16 +45,17 @@ func main() {
 	// libsql://[your-database].turso.io?authToken=[your-auth-token]
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		log.Println("DATABASE_URL environment variable is not set")
-		log.Println("Running without CRUD endpoints")
+		logger.Debug("DATABASE_URL environment variable is not set")
+		logger.Debug("Running without CRUD endpoints")
 	} else {
 		db, err := sql.Open("libsql", dbURL)
 		if err != nil {
-			log.Fatal(err)
+			logger.Error("cannot access database", slog.Any("error", err))
+			os.Exit(1)
 		}
 		dbQueries := database.New(db)
 		apiCfg.DB = dbQueries
-		log.Println("Connected to database!")
+		logger.Debug("Connected to database!")
 	}
 
 	router := chi.NewRouter()
@@ -89,10 +94,21 @@ func main() {
 
 	router.Mount("/v1", v1Router)
 	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: router,
+		Addr:              ":" + port,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
+	
+	logger.Info(
+		"server running",
+		slog.String("port", srv.Addr),
+	)
 
-	log.Printf("Serving on port: %s\n", port)
-	log.Fatal(srv.ListenAndServe())
+	if err := srv.ListenAndServe(); err != nil {
+		logger.Error(
+			"server stopped",
+			slog.Any("error", err),
+		)
+		os.Exit(1)
+	}
 }
